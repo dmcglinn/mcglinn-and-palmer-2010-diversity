@@ -1,22 +1,104 @@
-##for each start diam, each individual start numb,each time val,each indiv, c(xcord,ycord,sp.id,diameter values)
-hump.sim<-function(nperm,diams,ns,RAD='even',space='random',intensity=.8,all.space=FALSE,mort.buffer=1,expon=TRUE,overlap=FALSE){
- ##nperm is number of times to run the simulation
- ##diams is the input starting diameters
- ##ns is the input starting individual numbers
- ##space specifies spatial distribution: 'clustered','random','uniform', or 'grid'
- ##intensity specifies how strongly spatial clustering will occur (0-1)
- ##all.space means that all possible spatial distributions should be used
- ##mort.buff is a way to decrease the intensity of the mortaility (values less than one)
- ##expon is whether or not exponential decay of mortality shoudl be used, linear methods are available
- ##overlap specifies whether the degree of competition should be based on the area of overlap  with neighbors (TRUE) 
- ##or the summed diameter or neighbors (FALSE)
+########################################################
+# FILENAME: "hump.sim.R"
+# AUTHOR: Dan McGlinn
+# EMAIL: danmcglinn@gmail.com
+# DATE CREATED: 11.15.2009
+# LAST MODIFIED: 3.10.2010
+# PURPOSE: To provide the code for generating the relative abundance distributions (RADs), 
+# simulation model and secondary graphical programs needed to reproduce the results 
+# discussed in the manuscript
+########################################################
+########################################################
+##create the nine relative abundance distributions (RADs)##
+S<-numsp #specify size of the species pool
+##even RAD##
+p1<-rep(1/S,S)
+#############
+##now generate the lognormals as averages of random lognormal distributions##
+reps<-1000 ##number of replictates to average over
+vars<-c(1,2,4) ##variances to use for the 3 LOGN RADs
+X<-array(NA,dim=c(S,reps,length(vars))) #create holding array
+for(k in 1:length(vars)){ #loop through # of variances
+ for(i in 1:1000){ #loop through replicates
+  X[,i,k]<-sort(rlnorm(S,0,vars[k]),decreasing=TRUE) #populate array with sorted values from largest to smallest
+ }
+}
+X.m<-array(NA,dim=c(S,length(vars))) #create holding array
+for(k in 1:length(vars)) 
+ X.m[,k]<-sort(apply(X[,,k],1,mean),decreasing=TRUE)##calcualte mean and then order each distribution from largest to smallest
+P.m<-array(NA,dim=c(S,length(vars))) #holding arrary for RAD
+for(k in 1:length(vars))
+ P.m[,k]<-X.m[,k]/sum(X.m[,k]) #now convert the abundance distribution into relative abundance distributions
+##########################
+##create the uneven RAD##
+prop<-.99  #proportion of species pool dominated by one species
+p5<-rep(0,S) #create holding vector
+p5[1]<-prop #domiant species set
+p5[-1]<-rep((1-prop)/(S-1),S-1) #the remaining S-1 species set
+########################
+##geometric series##
+geom <- function(a1, k, S){
+ ai <- a1*k^((1:S)-1)
+ pi <- ai/sum(ai)
+ pi
+}
+p6<-geom(10,.9,S)
+##################
+##broken stick##
+brok <- function(abar, S){
+ ai <- rep(NA,S)
+ for (i in 1:S)
+  ai[i] <- abar*sum(1/i:S)
+ pi <- ai/sum(ai)
+ pi
+}
+p7<-brok(10,S)
+##################
+##Zipf##
+zipf <- function(a1,gamma,S){
+ ai <- a1*(1:S)^-gamma
+ pi <- ai / sum(ai)
+ pi
+}
+p8<-zipf(10,1.3,S)
+###################
+##Zipf-Mandelbrot##
+zipf.man <- function(a1,gamma,beta,S){
+ ai <- a1*((1:S)+beta)^-gamma
+ pi <- ai / sum(ai)
+ pi
+}
+p9<-zipf.man(10,1.3,100,S)
+#########################
+P.mat<-cbind(p1,P.m[,1],p6,P.m[,3],p5) #bind some of the RAD vectors together into one matrix
+colnames(P.mat)<-c('even','lnorm(0,1)','geometric','lnorm(0,4)','uneven')
+##note that 'P.mat' only contains the RADs mentioned in the manuscript
+
+########################################################
+########the function that simulates the results#########
+########################################################
+hump.sim<-function(nperm,diams,ns,RAD='even',space='random',intensity=.8,all.space=FALSE,expon=TRUE,overlap=FALSE){
+ ###the simulation model###
+ ##FUNCTION ARGUMENTS:
+ ##'nperm' is number of permutations a single set of starting parameters will be used
+ ##'diams' is the input starting diameters
+ ##'ns' is the input starting individual numbers
+ ##'space' specifies spatial distribution: 'clustered','random','uniform'
+ ##'intensity' specifies how strongly spatial clustering will occur (0-1)
+ ##'all.space' if TRUE then all three spatial distributions will be simulated
+ ##'expon' if TRUE then the probability of mortality will follow a negative exponential function, linear methods are available
+ ##'overlap' if TRUE then the degree of competition is based on the area of overlap with neighbors rather than the the summed diameter or neighbors
+ ##Note: specification of the allometric exponent is in the function 'hump.plot' not this function
+ #####################
+ ##Check that the RAD is parameterized correctly
  RADs<-c('even','lnorm(0,1)','geometric','lnorm(0,4)','uneven')
  rad.num<-match(RAD,RADs)
  if(is.na(rad.num)){
   print(paste(c('Choose one of the appropriate RADs:',RADs)))
   stop()
  }
- spaces<-c('clustered','random','uniform','grid')
+ ##Check that the spatial distributions are parameterized correctly
+ spaces<-c('clustered','random','uniform')
  if(all.space){ ##if all.space=TRUE then results generated for each spatial distribution
   space<-spaces
  }
@@ -29,12 +111,16 @@ hump.sim<-function(nperm,diams,ns,RAD='even',space='random',intensity=.8,all.spa
  len.space<-length(space) 
  len.diam<-length(diams)
  len.n<-length(ns)
+ #####################
+ ##create holder object that will keep the output from the simulation
  holder<-array(NA,dim=c(nperm,len.space,len.diam,len.n,Tim,max(ns),4))
- for(iperm in 1:nperm){
-  for(s in 1:len.space){ #spatial distributions
-   for(d in 1:len.diam){ #dimeter sizes
-    for(n in 1:len.n){ #ninit is initial density
-     #assign individuals to grid:
+ ##loop through all parameter combinations
+ for(iperm in 1:nperm){ ##permuations
+  for(s in 1:len.space){ ##spatial distributions
+   for(d in 1:len.diam){ ##dimeter sizes
+    for(n in 1:len.n){ ##initial densities
+     #######################
+     ##1-ESTABLISHMENT PHASE
      if(space[s]=='random')
       holder[iperm,s,d,n,1,1:ns[n],1:2]<-runif(2*ns[n])#x&y
      if(space[s]=='clustered'){ 
@@ -60,11 +146,6 @@ hump.sim<-function(nperm,diams,ns,RAD='even',space='random',intensity=.8,all.spa
         iparent<-iparent+1
      }}}
      if(space[s]=='uniform'){
-      require(spatstat)
-      pts<-rSSI(sqrt((0.4*4)/(pi*ns[n])),ns[n])  ##Simple Sequential Inhibition,first arg is radius, 2nd arg is # of pts
-      holder[iperm,s,d,n,1,1:ns[n],1:2]<-c(pts$x,pts$y)#x&y
-     }
-     if(space[s]=='grid'){
       sns<-sqrt(ns[n])
       if(sns==round(sqrt(ns[n]))){ ##first check that n[ns] is a perferct square
        pts<- c(0,seq(1/(sns-1),(sns-2)*(1/(sns-1)),1/(sns-1)),1)
@@ -74,15 +155,18 @@ hump.sim<-function(nperm,diams,ns,RAD='even',space='random',intensity=.8,all.spa
         stop('# of individuals does not completely fill grid, n = 2^x where x is an integer')
      }}
      ##assign species ids and initial diameters
+     ##note that the object 'P.mat' which contains each species probability of being drawn from the 
+     ##the species pool is defined outside of this function ('hump.sim').
      holder[iperm,s,d,n,1,1:ns[n],3]<-sample(x=1:numsp,size=ns[n],prob=P.mat[,rad.num],replace=TRUE) #sp.id
-     holder[iperm,s,d,n,1,1:ns[n],4]<-rep(diams[d],ns[n]) #diameter
-     for(t in 1:Tim){
-      #growth phase
-      #check for closeness
+     holder[iperm,s,d,n,1,1:ns[n],4]<-rep(diams[d],ns[n]) #starting diameter
+     for(t in 1:Tim){ ##loop through time steps
+      ################
+      ##2-GROWTH PHASE
       hasdiam<-(1:ns[n])[!is.na(holder[iperm,s,d,n,t,1:ns[n],4])]
       ndiams<-length(hasdiam)
       if(ndiams>0){
        diamsum<-rep(0,ndiams)
+       ##check for closeness
        dists<-as.matrix(dist(cbind(holder[iperm,s,d,n,t,hasdiam,1],holder[iperm,s,d,n,t,hasdiam,2]),upper=T,diag=T))
        for(i in 1:ndiams){
         for(j in (1:ndiams)[-i]){
@@ -100,15 +184,12 @@ hump.sim<-function(nperm,diams,ns,RAD='even',space='random',intensity=.8,all.spa
        deltadiam <- rep(0,ndiams)
        for(i in 1:ndiams){
         if(diamsum [i] > 0 ){ 
-         if(expon){ ##negative exponential prob of mortality (default)
-#          deltadiam[i] <- diamch * exp(-diamsum[i]  * mort.buffer[holder[iperm,s,d,n,t,hasdiam[i],3]]) ##simplest and more complex produce similar results
-          deltadiam[i] <- diamch * exp(-diamsum[i]  * mort.buffer) ##simplest and more complex produce similar results
-#          deltadiam[i] <- diamch * exp(-diamsum[i] * (1-diams[d]) * mort.buffer)
-#          deltadiam[i] <- diamch * exp(-diamsum[i] * (1-holder[iperm,s,d,n,t,hasdiam[i],4]) * mort.buffer)
+         if(expon){ ##negative exponential prob of mortality (default), Equ.1
+          deltadiam[i] <- diamch * exp(-diamsum[i]) ##simplest and more complex produce similar results
          }
-         else{ ##piecewise linear decreased of mortality, piecwise b/c not negative
-          if((diamsum[i] * mort.buffer) < diamch){
-           deltadiam[i] <- diamch - (diamsum[i] * (1-diams[d]) * mort.buffer)
+         else{ ##piecewise linear decreased of mortality, piecwise b/c prob of mort cannot be a negative value
+          if(diamsum[i] < diamch){
+           deltadiam[i] <- diamch - (diamsum[i] * (1-diams[d]))
           }
           else{
            deltadiam[i] <- 0  
@@ -117,36 +198,58 @@ hump.sim<-function(nperm,diams,ns,RAD='even',space='random',intensity=.8,all.spa
          deltadiam[i] <- diamch
         }
        }
-       #probabilistic mortality related to growth
+       ##################
+       ##3-THINNING PHASE
        if(t < Tim){
-        alive<-runif(ndiams) > 1 - (deltadiam / diamch)
+        alive<-runif(ndiams) > 1 - (deltadiam / diamch) ##Equ.2
         holder[iperm,s,d,n,t+1,hasdiam[alive],1:3] <- holder[iperm,s,d,n,t,hasdiam[alive],1:3]
         holder[iperm,s,d,n,t+1,hasdiam[alive],4] <- holder[iperm,s,d,n,t,hasdiam[alive],4] + deltadiam[alive]
   }}}}}}
-  print(iperm)
+  print(iperm) ##let user know what permutation the simulation is on
  }
- holder
+ holder ##output simulation result
 }
+########################################################
+########################################################
 
-hump.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l',lwd=2,pch=19,cls=palette(),cls.poly=rep('grey',dim(holder)[2]),xlab='biomass(diam^bexp)',ylab='species richness',bexp=8/3){
- xlims<-c(min(apply(apply(holder[,1,1,1,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)),
-          max(apply(apply(holder[,dim(holder)[2],dim(holder)[3],dim(holder)[4],,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)))
+
+##graphical script for the biomass-richness relationship##
+hump.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l',lwd=2,pch=19,cls=palette(),cls.poly=rep('grey',dim(holder)[2]),main='',xlab='biomass',ylab='species richness',allo=8/3){
+ ##plots number of species vs. total biomass
+ ##FUNCTION ARGUMENTS:
+ ##'holder' is any output object from the function "hump.sim"
+ ##'avg' if TRUE then the average across all permuations is plotted
+ ##'log' may be either '','x','y', or 'xy' which results in a log transformation of neither axis, x only, y only, or both x and y axes respectively
+ ##'add' if TRUE then the function plots the results on top of the previous active graphical display
+ ##'ci' if TRUE then the 95% confidence intervals are plotted, only works if 'avg' is TRUE
+ ##'poly', if TRUE then the confidence intervals are represented as a colored polygon and not simply as lines, only works if 'ci' is TRUE
+ ##'type' may be either 'l','p','o', see ?plot.default
+ ##'lwd' specifies line width any positive numeric
+ ##'pch' specfies point style, see ?points
+ ##'cls' specifes the color scheme for the points or lines of the results
+ ##'cls.poly' specifies the color scheme for the confidence interval
+ ##'main' specifies the main title for the graphic, default is blank
+ ##'xlab' label of the x-axis
+ ##'ylab' label of the y-axis
+ ##'allo' the allometric exponent by which diameter is converted to above-ground biomass
+ #####################
+ xlims<-c(min(apply(apply(holder[,1,1,1,,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)),
+          max(apply(apply(holder[,dim(holder)[2],dim(holder)[3],dim(holder)[4],,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)))
  ylims<-c(1,numsp)
- if(avg){ ##if avg is true then averages over the permutations are calculated an ploted
+ if(avg){ ##if avg is true then averages over the permutations are calculated and ploted
   if(add==FALSE){ ##if add is false then new plot is created
-   plot(apply(apply(holder[,1,1,1,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean),apply(apply(holder[,1,1,1,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,mean),type='n',
-        xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab)
+   plot(apply(apply(holder[,1,1,1,,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean),apply(apply(holder[,1,1,1,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,mean),type='n',
+        xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab,main=main)
   }
   if(ci){ ##if ci is true then confidence intervals are added as lines
    for(s in 1:dim(holder)[2]){ ##different spatial distributions
-    if(is.na(cls[s])) next
+    if(is.na(cls[s])) next 
     for(d in 1:dim(holder)[3]){ ##different starting diameters
      for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-#      bios<-apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)
-      b.low<-apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,function(x){quantile(x,probs=.025)})
-      b.high<-apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,function(x){quantile(x,probs=.975)})
-      s.low<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
-      s.high<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
+      b.low<-apply(apply(holder[,s,d,n,-1,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,function(x){quantile(x,probs=.025)})
+      b.high<-apply(apply(holder[,s,d,n,-1,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,function(x){quantile(x,probs=.975)})
+      s.low<-apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
+      s.high<-apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
       ##necessary to work with logs...
       b.low<-ifelse(b.low==0,b.low+.00001,b.low)
       s.low<-ifelse(s.low==0,s.low+.00001,s.low)
@@ -154,8 +257,6 @@ hump.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l
        polygon(c(b.low,rev(b.high)),c(s.low,rev(s.high)),col=cls.poly[s],border=NA)
       }
       else{
-#       points(bios,s.low,type='l',col=cls[s],lty=2)
-#       points(bios,s.high,type='l',col=cls[s],lty=2)
        points(b.low,s.low,type='l',col=cls[s],lty=2)
        points(b.high,s.high,type='l',col=cls[s],lty=2)
   }}}}}  
@@ -163,44 +264,61 @@ hump.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l
    if(is.na(cls[s])) next
    for(d in 1:dim(holder)[3]){ ##different starting diameters
     for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-     points(apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean),apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,mean),type=type,lwd=lwd,col=cls[s],pch=pch)
+     points(apply(apply(holder[,s,d,n,-1,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean),apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,mean),type=type,lwd=lwd,col=cls[s],pch=pch)
   }}}
  }
  else{ #avg is FALSE and no averaging is performed
   if(add==FALSE){ ##if add is false then new plot is created
-   plot(apply(holder[,1,1,1,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),apply(holder[,1,1,1,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),type='n',
-      xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab)
+   plot(apply(holder[,1,1,1,,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),apply(holder[,1,1,1,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),type='n',
+      xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab,main=main)
   }
   for(s in 1:dim(holder)[2]){ ##different spatial distributions
    if(is.na(cls[s])) next
    for(d in 1:dim(holder)[3]){ ##different starting diameters
     for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-     points(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),apply(holder[,s,d,n,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),type=type,lwd=lwd,col=cls[s],pch=pch)
+     points(apply(holder[,s,d,n,-1,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),type=type,lwd=lwd,col=cls[s],pch=pch)
   }}}
  }
  abline(h=numsp,col='grey',lty=2)
 }
+##########################################################
 
-indiv.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l',lwd=2,pch=19,cls=palette(),cls.poly=rep('grey',dim(holder)[2]),xlab='biomass(diam^bexp)',ylab='# of individuals',bexp=8/3){
- ##plots biomass vs num of indivs
- xlims<-c(min(apply(apply(holder[,1,1,1,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)),
-          max(apply(apply(holder[,dim(holder)[2],dim(holder)[3],dim(holder)[4],,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)))
+indiv.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l',lwd=2,pch=19,cls=palette(),cls.poly=rep('grey',dim(holder)[2]),main='',xlab='biomass',ylab='# of individuals',allo=8/3){
+ ##plots num of indivs vs. total biomass
+ ##FUNCTION ARGUMENTS:
+ ##'holder' is any output object from the function "hump.sim"
+ ##'avg' if TRUE then the average across all permuations is plotted
+ ##'log' may be either '','x','y', or 'xy' which results in a log transformation of neither axis, x only, y only, or both x and y axes respectively
+ ##'add' if TRUE then the function plots the results on top of the previous active graphical display
+ ##'ci' if TRUE then the 95% confidence intervals are plotted, only works if 'avg' is TRUE
+ ##'poly', if TRUE then the confidence intervals are represented as a colored polygon and not simply as lines, only works if 'ci' is TRUE
+ ##'type' may be either 'l','p','o', see ?plot.default
+ ##'lwd' specifies line width any positive numeric
+ ##'pch' specfies point style, see ?points
+ ##'cls' specifes the color scheme for the points or lines of the results
+ ##'cls.poly' specifies the color scheme for the confidence interval
+ ##'main' specifies the main title for the graphic, default is blank
+ ##'xlab' label of the x-axis
+ ##'ylab' label of the y-axis
+ ##'allo' the allometric exponent by which diameter is converted to above-ground biomass
+ #####################
+ xlims<-c(min(apply(apply(holder[,1,1,1,,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)),
+          max(apply(apply(holder[,dim(holder)[2],dim(holder)[3],dim(holder)[4],,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)))
  ylims<-c(1,max(ns))
- if(avg){ ##if avg is true then averages over the permutations are calculated an ploted
+ if(avg){ ##if avg is true then averages over the permutations are calculated and ploted
   if(add==FALSE){ ##if add is false then new plot is created
-   plot(apply(apply(holder[,1,1,1,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean),apply(apply(holder[,1,1,1,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),type='n',
-        xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab)
+   plot(apply(apply(holder[,1,1,1,,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean),apply(apply(holder[,1,1,1,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),type='n',
+        xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab,main=main)
   }
   if(ci){ ##if ci is true then confidence intervals are added as lines
    for(s in 1:dim(holder)[2]){ ##different spatial distributions
     if(is.na(cls[s])) next
     for(d in 1:dim(holder)[3]){ ##different starting diameters
      for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-#      bios<-apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)
-      b.low<-apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,function(x){quantile(x,probs=.025)})
-      b.high<-apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,function(x){quantile(x,probs=.975)})
-      s.low<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
-      s.high<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
+      b.low<-apply(apply(holder[,s,d,n,-1,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,function(x){quantile(x,probs=.025)})
+      b.high<-apply(apply(holder[,s,d,n,-1,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,function(x){quantile(x,probs=.975)})
+      s.low<-apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
+      s.high<-apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
       ##necessary to work with logs...
       b.low<-ifelse(b.low==0,b.low+.00001,b.low)
       s.low<-ifelse(s.low==0,s.low+.00001,s.low)
@@ -208,8 +326,6 @@ indiv.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='
        polygon(c(b.low,rev(b.high)),c(s.low,rev(s.high)),col=cls.poly[s],border=NA)
       }
       else{
-#       points(bios,s.low,type='l',col=cls[s],lty=2)
-#       points(bios,s.high,type='l',col=cls[s],lty=2)
        points(b.low,s.low,type='l',col=cls[s],lty=2)
        points(b.high,s.high,type='l',col=cls[s],lty=2)
   }}}}}  
@@ -217,152 +333,119 @@ indiv.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='
    if(is.na(cls[s])) next
    for(d in 1:dim(holder)[3]){ ##different starting diameters
     for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-     points(apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean),apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),type=type,lwd=lwd,col=cls[s],pch=pch)
+     points(apply(apply(holder[,s,d,n,-1,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean),apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),type=type,lwd=lwd,col=cls[s],pch=pch)
   }}}
  }
  else{ #avg is FALSE and no averaging is performed
   if(add==FALSE){ ##if add is false then new plot is created
-   plot(apply(holder[,1,1,1,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),apply(holder[,1,1,1,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),type='n',
-      xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab)
+   plot(apply(holder[,1,1,1,,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),apply(holder[,1,1,1,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),type='n',
+      xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab,main=main)
   }
   for(s in 1:dim(holder)[2]){ ##different spatial distributions
    if(is.na(cls[s])) next
    for(d in 1:dim(holder)[3]){ ##different starting diameters
     for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-     points(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),type=type,lwd=lwd,col=cls[s],pch=pch)
+     points(apply(holder[,s,d,n,-1,,4]^allo,c(1,2),function(x){sum(x,na.rm=TRUE)}),apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),type=type,lwd=lwd,col=cls[s],pch=pch)
   }}}
  }
 }
 
-time.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l',lwd=2,pch=19,cls=palette(),cls.poly=rep('grey',dim(holder)[2]),xlab='Time',ylab='# of individuals'){
- ##plots time vs num of indivs
+time.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l',lwd=2,pch=19,cls=palette(),cls.poly=rep('grey',dim(holder)[2]),main='',xlab='Time',ylab='# of individuals'){
+ ##plots time vs. num of indivs
+ ##FUNCTION ARGUMENTS:
+ ##'holder' is any output object from the function "hump.sim"
+ ##'avg' if TRUE then the average across all permuations is plotted
+ ##'log' may be either '','x','y', or 'xy' which results in a log transformation of neither axis, x only, y only, or both x and y axes respectively
+ ##'add' if TRUE then the function plots the results on top of the previous active graphical display
+ ##'ci' if TRUE then the 95% confidence intervals are plotted, only works if 'avg' is TRUE
+ ##'poly', if TRUE then the confidence intervals are represented as a colored polygon and not simply as lines, only works if 'ci' is TRUE
+ ##'type' may be either 'l','p','o', see ?plot.default
+ ##'lwd' specifies line width any positive numeric
+ ##'pch' specfies point style, see ?points
+ ##'cls' specifes the color scheme for the points or lines of the results
+ ##'cls.poly' specifies the color scheme for the confidence interval
+ ##'main' specifies the main title for the graphic, default is blank
+ ##'xlab' label of the x-axis
+ ##'ylab' label of the y-axis
+ #####################
  xlims<-c(1,Tim)
  ylims<-c(1,max(ns))
  if(avg){ ##if avg is true then averages over the permutations are calculated an ploted
   if(add==FALSE){ ##if add is false then new plot is created
    plot(1:Tim,apply(apply(holder[,1,1,1,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),type='n',
-        xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab)
+        xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab,main=main)
   }
   if(ci){ ##if ci is true then confidence intervals are added as lines
    for(s in 1:dim(holder)[2]){ ##different spatial distributions
     if(is.na(cls[s])) next
     for(d in 1:dim(holder)[3]){ ##different starting diameters
      for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-      s.low<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
-      s.high<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
+      s.low<-apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
+      s.high<-apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
       ##necessary to work with logs...
       s.low<-ifelse(s.low==0,s.low+.00001,s.low)
       if(poly){ 
-       polygon(c(1:Tim,rev(1:Tim)),c(s.low,rev(s.high)),col=cls.poly[s],border=NA)
+       polygon(c(2:Tim,rev(2:Tim)),c(s.low,rev(s.high)),col=cls.poly[s],border=NA)
       }
       else{
-       points(1:Tim,s.low,type='l',col=cls[s],lty=2)
-       points(1:Tim,s.high,type='l',col=cls[s],lty=2)
+       points(2:Tim,s.low,type='l',col=cls[s],lty=2)
+       points(2:Tim,s.high,type='l',col=cls[s],lty=2)
   }}}}}  
   for(s in 1:dim(holder)[2]){ ##different spatial distributions
    if(is.na(cls[s])) next
    for(d in 1:dim(holder)[3]){ ##different starting diameters
     for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-     points(1:Tim,apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),type=type,lwd=lwd,col=cls[s],pch=pch)
+     points(2:Tim,apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),type=type,lwd=lwd,col=cls[s],pch=pch)
   }}}
  }
  else{ #avg is FALSE and no averaging is performed
   if(add==FALSE){ ##if add is false then new plot is created
    plot(1:Tim,apply(holder[,1,1,1,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),type='n',
-      xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab)
+      xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab,main=main)
   }
   for(s in 1:dim(holder)[2]){ ##different spatial distributions
    if(is.na(cls[s])) next
    for(d in 1:dim(holder)[3]){ ##different starting diameters
     for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-     points(1:Tim,apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),type=type,lwd=lwd,col=cls[s],pch=pch)
+     points(2:Tim,apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),type=type,lwd=lwd,col=cls[s],pch=pch)
   }}}
  }
 }
 
-
-
-thin.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l',lwd=2,pch=19,cls=palette(),cls.poly=rep('grey',dim(holder)[2]),xlab='number of individuals',ylab='mean biomass/individual',bexp=8/3){
- ##plots mean biomass per tree vs # of individuals
- ylims<-c(min(apply(apply(holder[,dim(holder)[2],dim(holder)[3],dim(holder)[4],,,4]^bexp,c(1,2),function(x){mean(x/length(x[!is.na(x)]),na.rm=TRUE)}),2,mean),na.rm=T),
-  max(apply(apply(holder[,dim(holder)[2],dim(holder)[3],dim(holder)[4],,,4]^bexp,c(1,2),function(x){mean(x/length(x[!is.na(x)]),na.rm=TRUE)}),2,mean),na.rm=T))
- xlims<-c(1,max(ns))
- if(avg){ ##if avg is true then averages over the permutations are calculated an ploted
-  if(add==FALSE){ ##if add is false then new plot is created
-   plot(apply(apply(holder[,1,1,1,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),apply(apply(holder[,1,1,1,,,4]^bexp,c(1,2),function(x){mean(x/length(x[!is.na(x)]),na.rm=TRUE)}),2,mean),type='n',
-        xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab)
-  }
-  if(ci){ ##if ci is true then confidence intervals are added as lines
-   for(s in 1:dim(holder)[2]){ ##different spatial distributions
-    if(is.na(cls[s])) next
-    for(d in 1:dim(holder)[3]){ ##different starting diameters
-     for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-      s.low<-apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){mean(x/length(x[!is.na(x)]),na.rm=TRUE)}),2,function(x){quantile(x,probs=.025)})
-      s.high<-apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){mean(x/length(x[!is.na(x)]),na.rm=TRUE)}),2,function(x){quantile(x,probs=.975)})
-      b.low<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
-      b.high<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
-      ##necessary to work with logs...
-      b.low<-ifelse(b.low==0,b.low+.00001,b.low)
-      s.low<-ifelse(s.low==0,s.low+.00001,s.low)
-      if(poly){ 
-       polygon(c(b.low,rev(b.high)),c(s.low,rev(s.high)),col=cls.poly[s],border=NA)
-      }
-      else{
-       points(b.low,s.low,type='l',col=cls[s],lty=2)
-       points(b.high,s.high,type='l',col=cls[s],lty=2)
-  }}}}}  
-  for(s in 1:dim(holder)[2]){ ##different spatial distributions
-   if(is.na(cls[s])) next
-   for(d in 1:dim(holder)[3]){ ##different starting diameters
-    for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-     points(apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){mean(x/length(x[!is.na(x)]),na.rm=TRUE)}),2,mean),type=type,lwd=lwd,col=cls[s],pch=pch)
-  }}}
- }
- else{ #avg is FALSE and no averaging is performed
-  if(add==FALSE){ ##if add is false then new plot is created
-   plot(apply(holder[,1,1,1,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),apply(holder[,1,1,1,,,4]^bexp,c(1,2),function(x){mean(x/length(x[!is.na(x)]),na.rm=TRUE)}),type='n',
-      xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab)
-  }
-  for(s in 1:dim(holder)[2]){ ##different spatial distributions
-   if(is.na(cls[s])) next
-   for(d in 1:dim(holder)[3]){ ##different starting diameters
-    for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-     points(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){mean(x/length(x[!is.na(x)]),na.rm=TRUE)}),type=type,lwd=lwd,col=cls[s],pch=pch)
-  }}}
- }
- ##-3/2 thinning lines for comparison
- x<-seq(1,max(ns),1)
- c<-seq(.01,.5,.05)
- for(i in 1:length(c)){
-  lines(x,c[i]*x^-(3/2),col='grey')
- }
- ##-4/3 thinning lines for comparison
- x<-seq(1,max(ns),1)
- c<-seq(.01,.5,.05)
- for(i in 1:length(c)){
-  lines(x,c[i]*x^-(4/3),col='grey50',lty=2,lwd=2)
- }
- legend('bottomleft',c('-3/2 thinning lines','-4/3 thinning lines'),col=c('grey','grey50'),lty=c(1,2),lwd=c(1,2),bty='n')
-}
-
-raref.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l',lwd=2,pch=19,cls=palette(),cls.poly=rep('grey',dim(holder)[2]),ylab='species richness',xlab='# of individuals'){
+raref.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='l',lwd=2,pch=19,cls=palette(),cls.poly=rep('grey',dim(holder)[2]),main='',xlab='# of individuals',ylab='species richness'){
  ##plots num of indivs vs richness
+ ##FUNCTION ARGUMENTS:
+ ##'holder' is any output object from the function "hump.sim"
+ ##'avg' if TRUE then the average across all permuations is plotted
+ ##'log' may be either '','x','y', or 'xy' which results in a log transformation of neither axis, x only, y only, or both x and y axes respectively
+ ##'add' if TRUE then the function plots the results on top of the previous active graphical display
+ ##'ci' if TRUE then the 95% confidence intervals are plotted, only works if 'avg' is TRUE
+ ##'poly', if TRUE then the confidence intervals are represented as a colored polygon and not simply as lines, only works if 'ci' is TRUE
+ ##'type' may be either 'l','p','o', see ?plot.default
+ ##'lwd' specifies line width any positive numeric
+ ##'pch' specfies point style, see ?points
+ ##'cls' specifes the color scheme for the points or lines of the results
+ ##'cls.poly' specifies the color scheme for the confidence interval
+ ##'main' specifies the main title for the graphic, default is blank
+ ##'xlab' label of the x-axis
+ ##'ylab' label of the y-axis
+ #####################
  xlims<-c(0,max(ns))
  ylims<-c(1,numsp)
  if(avg){ ##if avg is true then averages over the permutations are calculated an ploted
   if(add==FALSE){ ##if add is false then new plot is created
    plot(apply(apply(holder[,1,1,1,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),apply(apply(holder[,1,1,1,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,mean),type='n',
-        xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab)
+        xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab,main=main)
   }
   if(ci){ ##if ci is true then confidence intervals are added as lines
    for(s in 1:dim(holder)[2]){ ##different spatial distributions
     if(is.na(cls[s])) next
     for(d in 1:dim(holder)[3]){ ##different starting diameters
      for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-      b.low<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
-      b.high<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
-      s.low<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
-      s.high<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
+      b.low<-apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
+      b.high<-apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
+      s.low<-apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,function(x){quantile(x,probs=.025)})
+      s.high<-apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,function(x){quantile(x,probs=.975)})
       ##necessary to work with logs...
       b.low<-ifelse(b.low==0,b.low+.00001,b.low)
       s.low<-ifelse(s.low==0,s.low+.00001,s.low)
@@ -370,8 +453,6 @@ raref.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='
        polygon(c(b.low,rev(b.high)),c(s.low,rev(s.high)),col=cls.poly[s],border=NA)
       }
       else{
-#       points(bios,s.low,type='l',col=cls[s],lty=2)
-#       points(bios,s.high,type='l',col=cls[s],lty=2)
        points(b.low,s.low,type='l',col=cls[s],lty=2)
        points(b.high,s.high,type='l',col=cls[s],lty=2)
   }}}}}  
@@ -379,74 +460,20 @@ raref.plot<-function(holder,avg=TRUE,log='',add=FALSE,ci=FALSE,poly=FALSE,type='
    if(is.na(cls[s])) next
    for(d in 1:dim(holder)[3]){ ##different starting diameters
     for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-     points(apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,mean),type=type,lwd=lwd,col=cls[s],pch=pch)
+     points(apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),2,mean),apply(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,mean),type=type,lwd=lwd,col=cls[s],pch=pch)
   }}}
  }
  else{ #avg is FALSE and no averaging is performed
   if(add==FALSE){ ##if add is false then new plot is created
    plot(apply(holder[,1,1,1,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),apply(holder[,1,1,1,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),type='n',
-      xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab)
+      xlim=xlims,ylim=ylims,log=log,xlab=xlab,ylab=ylab,main=main)
   }
   for(s in 1:dim(holder)[2]){ ##different spatial distributions
    if(is.na(cls[s])) next
    for(d in 1:dim(holder)[3]){ ##different starting diameters
     for(n in 1:dim(holder)[4]){ ##differnt starting individual densities
-     points(apply(holder[,s,d,n,,,3],c(1,2),function(x){length((x[!is.na(x)]))}),apply(holder[,s,d,n,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),type=type,lwd=lwd,col=cls[s],pch=pch)
+     points(apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length((x[!is.na(x)]))}),apply(holder[,s,d,n,-1,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),type=type,lwd=lwd,col=cls[s],pch=pch)
   }}}
  }
  abline(h=numsp,col='grey',lty=2)
 }
-
-siml<-function(holder,abu=TRUE,ci=FALSE){
- ##calculates average similarity across permuations for a given point in time
- require(vegan) 
- dists<-array(NA,dim=dim(holder)[2:5])
- ci.int<-array(NA,dim=c(dim(holder)[2:5],2))
- for(s in 1:dim(holder)[2]){
-  for(d in 1:dim(holder)[3]){
-   for(n in 1:dim(holder)[4]){
-    spxsite<-array(0,dim=c(dim(holder)[1],numsp,Tim))
-    for(iperm in 1:dim(holder)[1]){
-     for(t in 1:Tim){
-      for(indiv in 1:ns[n]){
-       if(!is.na(holder[iperm,s,d,n,t,indiv,4])){
-        spxsite[iperm,holder[iperm,s,d,n,t,indiv,3],t] <- spxsite[iperm,holder[iperm,s,d,n,t,indiv,3],t] + holder[iperm,s,d,n,t,indiv,4]^(8/3)
-    }}}}
-    if(ci){
-     if(abu){
-      ci.int[s,d,n,,1]<-apply(spxsite,3,function(x){quantile(vegdist(x,method='horn'),probs=.025,na.rm = TRUE)})
-      ci.int[s,d,n,,2]<-apply(spxsite,3,function(x){quantile(vegdist(x,method='horn'),probs=.975,na.rm = TRUE)})
-     }
-     else{
-      ci.int[s,d,n,,1]<-apply(spxsite,3,function(x){quantile(vegdist(ifelse(x>0,1,0),method='jaccard'),probs=.025,na.rm = TRUE)})
-      ci.int[s,d,n,,2]<-apply(spxsite,3,function(x){quantile(vegdist(ifelse(x>0,1,0),method='jaccard'),probs=.975,na.rm = TRUE)})
-    }}
-    else{
-     if(abu)
-      dists[s,d,n,]<-apply(spxsite,3,function(x){mean(vegdist(x,method='horn'))})
-     else
-      dists[s,d,n,]<-apply(spxsite,3,function(x){mean(vegdist(ifelse(x>0,1,0),method='jaccard'))})
- }}}}
- if(ci)
-  ci.int
- else
-  dists
-}
-
-
-
-#quantile(apply(holder[,s,d,n,1,,3],2,function(x){length(unique(x[!is.na(x)]))}),probs=c(.025,.957))
-
-##non-parametric ci
-#hist(apply(holder[,s,d,n,1,,3],2,function(x){length(unique(x[!is.na(x)]))}))
-#points(quantile(apply(holder[,s,d,n,1,,3],2,function(x){length(unique(x[!is.na(x)]))}),probs=c(.025,.957)),c(0,0),col='red')
-#sum(apply(holder[,s,d,n,1,,3],2,function(x){length(unique(x[!is.na(x)]))})>58)
-#sum(apply(holder[,s,d,n,1,,3],2,function(x){length(unique(x[!is.na(x)]))})<=69)
-#      
-
-#     Bmeans<-apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,mean)
-#     Bsds<-apply(apply(holder[,s,d,n,,,4]^bexp,c(1,2),function(x){sum(x,na.rm=TRUE)}),2,sd)
-#     Bzval<-ifelse(Bsds>0,(Bmeans-Bsds)/Bsds,0)
-#     SRsds<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,sd)
-#     SRmeans<-apply(apply(holder[,s,d,n,,,3],c(1,2),function(x){length(unique(x[!is.na(x)]))}),2,mean)
-#     SRzval<-(SRmeans-SRsds)/SRsds
